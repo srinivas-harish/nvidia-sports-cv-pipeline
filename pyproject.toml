@@ -16,6 +16,7 @@ torch = "^2.7.1"
 torchvision = "^0.22.1"
 scikit-learn = "^1.7.0"
 filterpy = "^1.4.5"
+roboflow = "^1.1.66"
 
 
 [build-system]
