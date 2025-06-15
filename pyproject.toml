@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "sport-cv-pipeline"
+version = "0.1.0"
+description = ""
+authors = ["Srinivas Harish <srinivas7992@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+ultralytics = "^8.3.155"
+opencv-python = "^4.11.0.86"
+numpy = "^2.3.0"
+matplotlib = "^3.10.3"
+tqdm = "^4.67.1"
+torch = "^2.7.1"
+torchvision = "^0.22.1"
+scikit-learn = "^1.7.0"
+filterpy = "^1.4.5"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
