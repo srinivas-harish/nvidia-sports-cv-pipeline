@@ -1,1 +1,4 @@
 data/
+runs/
+*.pt
+__pycache__/
