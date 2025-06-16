@@ -4,9 +4,9 @@ import os
 
 # Absolute paths for WSL  
 VIDEO_PATH = "/home/srini/sport-cv-pipeline/data/test_clip.mp4"
-MODEL_PATH = "/home/srini/sport-cv-pipeline/runs/train/football_yolov8_6402/weights/best.pt"
+MODEL_PATH = "/home/srini/sport-cv-pipeline/runs/train/football_yolov8l_640/weights/best.pt"
 OUTPUT_PATH = "/home/srini/sport-cv-pipeline/data/test_clip_output.mp4"
-
+ 
 def main():
     assert os.path.exists(VIDEO_PATH), f"Video not found: {VIDEO_PATH}"
     assert os.path.exists(MODEL_PATH), f"Model not found: {MODEL_PATH}"

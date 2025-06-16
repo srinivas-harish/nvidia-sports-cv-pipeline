@@ -17,7 +17,7 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11" 
+python = "^3.11"
 ultralytics = "^8.3.155"
 opencv-python = "^4.11.0.86"
 numpy = "^2.3.0"
@@ -30,11 +30,11 @@ torch = { version = "2.7.1+cu128", source = "pytorch" }
 torchvision = { version = "0.22.1+cu128", source = "pytorch" }
 torchaudio = { version = "2.7.1+cu128", source = "pytorch" }
 cython = "^3.1.2"
-lap = "^0.5.12"
+lap = "^0.4.0"
 loguru = "^0.7.3"
 cython-bbox = "^0.1.5"
 easydict = "^1.13"
-#yolox = { path = "~/YOLOX" }
+# yolox = { git = "https://github.com/Megvii-BaseDetection/YOLOX.git", rev = "main" }
 
 [[tool.poetry.source]]
 name = "pytorch"
