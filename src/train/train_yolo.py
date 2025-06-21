@@ -1,51 +1,35 @@
-from ultralytics import YOLO
-import argparse
+# train_yolo.py
+
 import os
-import time
+from ultralytics import YOLO
 
 
-def train_yolo(
-    data_yaml="data/football-players-v14/data.yaml",
-    img_size=640,
-    epochs=50,
-    batch_size=16,
-    name="football_yolov8l_640"
-):
-    #   absolute path to data.yaml
-    script_dir = os.path.dirname(os.path.abspath(__file__))  # → ~/sport-cv-pipeline/src/train
-    root_dir = os.path.dirname(os.path.dirname(script_dir))  # → ~/sport-cv-pipeline
-    abs_data_yaml = os.path.join(root_dir, data_yaml)
+def train_yolo_model():
+    # Define paths and training config
+    data_yaml_path = "/home/srini/sport-cv-pipeline/data/football-players-v13/data.yaml"
+    model_arch = "yolov9c.pt"  # Using YOLOv9-C
+    project_dir = "/home/srini/sport-cv-pipeline/runs"
+    run_name = "yolov9c_football_v13"
 
-    assert os.path.exists(abs_data_yaml), f"Dataset YAML not found: {abs_data_yaml}"
+    # Create the model
+    print(f"Loading model: {model_arch}")
+    model = YOLO(model_arch)
 
-    #  YOLOv8l
-    model = YOLO("yolov8l.pt")
-
+    # Kick off training
+    print(f"Starting training on dataset: {data_yaml_path}")
     model.train(
-        data=abs_data_yaml,
-        imgsz=img_size,
-        epochs=epochs,
-        batch=batch_size,
-        project="runs/train",
-        name=name,
+        data=data_yaml_path,
+        epochs=60,
+        imgsz=1280,
+        batch=12,
+        name=run_name,
+        project=project_dir,
         workers=4,
-        verbose=True
+        device=0  # Use CUDA device 0
     )
+
+    print(f"Training complete. Best weights saved to: {project_dir}/{run_name}/weights/best.pt")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train YOLOv8l on custom dataset")
-    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
-    parser.add_argument("--img_size", type=int, default=640, help="Image size (square)")
-    parser.add_argument("--data_yaml", type=str, default="data/football-players-v14/data.yaml", help="Path to data.yaml")
-    parser.add_argument("--name", type=str, default="football_yolov8l_640", help="Training run name")
-
-    args = parser.parse_args()
-    train_yolo(
-        data_yaml=args.data_yaml,
-        img_size=args.img_size,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        name=args.name
-    )
+    train_yolo_model()
