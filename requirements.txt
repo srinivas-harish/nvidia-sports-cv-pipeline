@@ -1,0 +1,9 @@
+# Core requirements for export_trt.py script
+ultralytics==8.3.0
+numpy==1.26.4
+torch>=2.1.0
+
+# These two lines are stubs for dependency resolution
+# TensorRT will NOT be installed via pip
+nvidia-pyindex
+nvidia-tensorrt

@@ -1,5 +1,8 @@
-## 🛠 Post-install: Add YOLOX Tracker
+Download TensorRT 10.12 GA ZIP from the official NVIDIA Developer website.
 
-After running `poetry install`, run this to install YOLOX:
- 
-poetry run pip install git+https://github.com/Megvii-BaseDetection/YOLOX.git
+Extract it to:
+C:\Projects\TensorRT-10.12\TensorRT-10.12.0.36
+
+Before running any Python scripts:
+set PATH=C:\Projects\TensorRT-10.12\TensorRT-10.12.0.36\lib;%PATH%
+set PYTHONPATH=C:\Projects\TensorRT-10.12\TensorRT-10.12.0.36\python
