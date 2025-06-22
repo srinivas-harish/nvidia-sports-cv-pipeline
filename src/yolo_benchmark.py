@@ -1,8 +1,10 @@
+
 import cv2
 import numpy as np
 import time
 from utils import read_video    
 from trackers.tracker import Tracker
+from assign_team.assign_team import TeamAssigner
 import csv, os
 
 VIDEO_PATH = 'data/test_clip.mp4'
@@ -10,6 +12,7 @@ print('Loading frames …')
 frames = read_video(VIDEO_PATH)
 
 tracker = Tracker('models/128060ep.pt')  # TensorRT engine to be rendered
+teamer = TeamAssigner()
 
 N_FR = len(frames)
 idx = 0
@@ -24,6 +27,16 @@ cv2.namedWindow('Demo', cv2.WINDOW_NORMAL)
 cv2.resizeWindow('Demo', 1920, 1080)
 print('\nKeys: ←/→ frame | SPACE play/pause | Q/ESC quit | R reset | B show ball stats\n')
 
+def _annotate_teams(frame_idx):
+    if frame_idx == 0 and frame_tracks[0]["players"]:
+        teamer.fit(frames[0], frame_tracks[0]["players"])
+    if teamer.kmeans is None:
+        return
+    for pid, info in frame_tracks[frame_idx]["players"].items():
+        team = teamer.predict(frames[frame_idx], info["bbox"], pid)
+        info["team"] = team
+        info["team_color"] = teamer.color_for_team(team)
+
 def process_single_frame(frame_idx):
     if frame_idx >= len(frames): return None
     start = time.time()
@@ -35,6 +48,8 @@ def process_single_frame(frame_idx):
     while len(frame_tracks) <= frame_idx:
         frame_tracks.append({"players": {}, "referees": {}, "ball": {}})
     frame_tracks[frame_idx] = tracked[0]
+
+    _annotate_teams(frame_idx)
 
     control_dummy = np.zeros(frame_idx + 1, dtype=int)
     sliced = {k: [v] for k, v in tracked[0].items()}
@@ -60,12 +75,15 @@ def process_continuous_batch(start_idx, batch_size):
             frame_tracks.append({"players": {}, "referees": {}, "ball": {}})
         frame_tracks[frame_idx] = t
 
+        _annotate_teams(frame_idx)
+
         control_dummy = np.zeros(frame_idx + 1, dtype=int)
         sliced = {k: [v] for k, v in t.items()}
         img = tracker.draw_annotations([f.copy()], sliced, control_dummy)[0]
         img = add_frame_info_overlay(img, frame_idx, t)
         processed.append(img)
     return processed
+
 
 def add_frame_info_overlay(img, frame_idx, tracks):
     h, w = img.shape[:2]
@@ -147,10 +165,10 @@ def reset_tracking():
     tracker.active_tracks.clear()
     tracker.stable_id_history.clear()
     tracker.next_stable_id = 1
+    teamer.reset()
     idx = 0
     print("Tracking state reset")
 
-#  main loop
 try:
     running = True
     while running and idx < N_FR:
