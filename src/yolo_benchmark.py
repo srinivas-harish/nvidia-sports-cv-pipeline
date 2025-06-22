@@ -3,82 +3,85 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 from utils import read_video    
-from trackers import Tracker    
-
-import csv
-import os 
+from trackers.tracker import Tracker
+import csv, os, pickle
 
 VIDEO_PATH = 'data/test_clip.mp4'
-
-#  base assets  
 print('Loading frames …')
 frames = read_video(VIDEO_PATH)
-#frames = frames[10:750]  #   frames 10 to 749
-tracker = Tracker('models/best.engine')    
 
-#  viewer state  
+tracker = Tracker('models/best.engine')  # TensorRT engine
+
+# Viewer state
 N_FR = len(frames)
 idx = 0
 play = False
 inference_times = []
+frame_tracks = []
+
+BATCH = 4
 
 cv2.namedWindow('Demo', cv2.WINDOW_NORMAL)
 cv2.resizeWindow('Demo', 1920, 1080)
 print('\nKeys: ←/→ frame | SPACE play/pause | Q/ESC quit\n')
 
 target_frame_time = 1 / 30  # 30 FPS
-BATCH = 4  # Tune batch size for your GPU
 
-# processing logic  
-def process_batch(batch_frames):
+def process_frame(frame):
     start = time.time()
-    results = tracker.model.predict(batch_frames, device=0, half=True, imgsz=1280, conf=0.3, verbose=False)
+    track_result = tracker.track_frame(frame)
     end = time.time()
 
-    elapsed_per_frame = ((end - start) * 1000) / len(batch_frames)
-    inference_times.extend([elapsed_per_frame] * len(batch_frames))
+    inference_times.append((end - start) * 1000)  # ms
+    frame_tracks.append(track_result)
 
+    sliced_tracks = {k: [v] for k, v in track_result.items()}
+    control_dummy = np.zeros(len(frame_tracks), dtype=int)
+    annotated = tracker.draw_annotations([frame.copy()], sliced_tracks, control_dummy)[0]
+    return annotated
+
+def process_batch(frames_slice):
+    start = time.time()
+    tracked = tracker.track_batch(frames_slice)
+    end = time.time()
+
+    latency = ((end - start) * 1000) / len(frames_slice)
+    inference_times.extend([latency] * len(frames_slice))
+
+    control_dummy = np.zeros(len(frame_tracks) + len(frames_slice), dtype=int)
     processed = []
-    for frame, result in zip(batch_frames, results):
-        for box, cls_id, conf in zip(result.boxes.xyxy, result.boxes.cls, result.boxes.conf):
-            x1, y1, x2, y2 = map(int, box)
-            class_name = result.names[int(cls_id)]
-            label = f'{class_name} {conf:.2f}'
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, (255, 255, 255), 2, cv2.LINE_AA)
-        processed.append(frame)
+
+    for i, (f, t) in enumerate(zip(frames_slice, tracked)):
+        frame_tracks.append(t)
+        sliced = {k: [v] for k, v in t.items()}
+        img = tracker.draw_annotations([f.copy()], sliced, control_dummy[:len(frame_tracks)])[0]
+        processed.append(img)
+
     return processed
 
-#  main OpenCV loop  
-buffer = []
 running = True
-
 while running and idx < N_FR:
     start_time = time.time()
 
-    if play and len(buffer) < BATCH:
-        for i in range(BATCH):
-            next_idx = idx + i
-            if next_idx < N_FR:
-                buffer.append(frames[next_idx])
-        processed = process_batch(buffer)
-        buffer.clear()
+    if play:
+        # Grab a batch of up to BATCH frames
+        frames_batch = frames[idx:idx+BATCH]
+        if not frames_batch:
+            break
 
-        for frame in processed:
-            idx += 1
-            if idx >= N_FR:
-                running = False
-                break
-            cv2.imshow('Demo', frame)
+        processed_batch = process_batch(frames_batch)
+        for processed in processed_batch:
+            cv2.imshow('Demo', processed)
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord('q')):
                 running = False
                 break
+        idx += len(frames_batch)
+
     else:
         frame = frames[idx]
-        processed = process_batch([frame])
-        cv2.imshow('Demo', processed[0])
+        processed = process_frame(frame)
+        cv2.imshow('Demo', processed)
 
         key = cv2.waitKey(1) & 0xFF
         if key in (27, ord('q')):
@@ -92,23 +95,20 @@ while running and idx < N_FR:
 
     elapsed = time.time() - start_time
     delay = max(0, target_frame_time - elapsed)
+    time.sleep(delay)
 
 cv2.destroyAllWindows()
- 
 
-#  report inference performance  
+# Save latency report
 if inference_times:
-    avg_time = np.mean(inference_times[100:700]) # Frame 100 to 700 to ignore initial spike
-    print(f"\nAverage YOLOv9c inference time: {avg_time:.2f} ms per frame (batch size {BATCH})")
+    avg_time = np.mean(inference_times[100:700]) if len(inference_times) > 700 else np.mean(inference_times)
+    print(f"\n***Average YOLOv9c+Tracking time: {avg_time:.2f} ms per frame")
 
-    # Save per-frame latencies to CSV
     csv_path = os.path.join(os.getcwd(), "inference_latency.csv")
-    with open(csv_path, mode='w', newline='') as f:
+    with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(["Frame Index", "Latency (ms)"])
-        for i, latency in enumerate(inference_times, start=10):
+        for i, latency in enumerate(inference_times, start=0):
             writer.writerow([i, latency])
 
     print(f"Saved per-frame latencies to '{csv_path}'")
-else:
-    print(" No inference timings recorded.")
