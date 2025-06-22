@@ -3,3 +3,7 @@ runs/
 *.pt
 __pycache__/
 vrampush
+benchmarks
+inference_latency.csv
+PROJECT
+models
