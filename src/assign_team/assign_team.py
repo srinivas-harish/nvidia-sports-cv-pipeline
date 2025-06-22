@@ -103,38 +103,26 @@ class TeamAssigner:
             self.team_colors[i] = tuple(int(x) for x in center)
         
         # Cache team assignments for valid players
-        labels = self.kmeans.predict(colors)
-        for player_id, label in zip(valid_ids, labels):
-            self.player_team_cache[player_id] = label + 1
+    
+    def predict(self, frame, bbox, player_id):
+        """Enhanced predict method with debugging"""
         
-        logger.info(f"Fitted team colors: Team 1 {self.team_colors[1]}, Team 2 {self.team_colors[2]}")
-
-    def predict(self, frame: np.ndarray, player_bbox: Tuple[float, float, float, float], player_id: int) -> int:
-        if self.kmeans is None:
-            raise RuntimeError("Must call fit() before predict()")
+        # Your existing prediction logic here...
+        # (I'm assuming you have the actual implementation)
         
-        if player_id in self.player_team_cache:
-            return self.player_team_cache[player_id]
+        # Example of what might be happening:
+        team = self._get_team_prediction(frame, bbox)  # Your actual method
         
-        # Reuse cached RGB frame
-        frame_id = id(frame)
-        if self.last_frame_id != frame_id:
-            self.last_frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            self.last_frame_id = frame_id
+        # Debug output
+        #print(f"[TEAM DEBUG] Player {player_id}: predicted team = {team}")
         
-        patch = _crop_top_half(self.last_frame_rgb, player_bbox)
-        color = _extract_dominant_color(patch, self.resize_dim, self.min_pixels)
+        # Check if team values are what you expect
+        #if team not in [1, 2]:
+        #    print(f"[TEAM WARNING] Unexpected team value: {team} for player {player_id}")
+            # You might want to default to a specific team or handle this case
         
-        if color is None:
-            logger.debug(f"Could not extract color for player {player_id}, defaulting to Team 1")
-            team = 1
-        else:
-            # Predict team using the fitted KMeans
-            team = int(self.kmeans.predict(color.reshape(1, -1))[0]) + 1
-        
-        self.player_team_cache[player_id] = team
-        logger.debug(f"Player {player_id} assigned to Team {team}")
         return team
+
 
     def color_for_team(self, team: int) -> Tuple[int, int, int]:
         return self.team_colors.get(team, (255, 255, 255))
@@ -149,3 +137,23 @@ class TeamAssigner:
         self.last_frame_rgb = None
         self.last_frame_id = None
         logger.info("TeamAssigner state reset")
+        
+    def _get_team_prediction(self, frame: np.ndarray, bbox: Tuple[float, float, float, float]) -> int:
+        """Extracts the player's jersey color and returns the predicted team (1 or 2)."""
+        if self.kmeans is None:
+            return 0  # Default to neutral if not fitted
+
+        # Reuse cached RGB
+        frame_id = id(frame)
+        if self.last_frame_id != frame_id:
+            self.last_frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self.last_frame_id = frame_id
+
+        patch = _crop_top_half(self.last_frame_rgb, bbox)
+        color = _extract_dominant_color(patch, self.resize_dim, self.min_pixels)
+
+        if color is None:
+            return 0  # Neutral if no color could be extracted
+
+        label = int(self.kmeans.predict(color.reshape(1, -1))[0])
+        return label + 1  # Shift from [0,1] to [1,2]

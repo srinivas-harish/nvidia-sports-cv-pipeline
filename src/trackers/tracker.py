@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os, sys
 from typing import List, Dict, Tuple, Optional
-from collections import deque
+from collections import deque 
 
 import cv2, numpy as np, torch, supervision as sv
 from ultralytics import YOLO
@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 # project-local helpers
 sys.path.append(os.path.abspath(os.path.join(__file__, "..", "..")))
 from utils import get_center_of_bbox, get_bbox_width, get_foot_position   
-
+from assign_acquisition.assign_acquisition import BallAcquisition
 torch.backends.cudnn.benchmark = True
 
 
@@ -303,11 +303,14 @@ class Tracker:
 
     #  DRAWING
     # ─────────────────────────────────────────────────────────────────────────
+
     def draw_annotations(
         self,
         frames: List[np.ndarray],
         tracks: Dict[str, List[Dict[int, Dict]]],
         control_hist: np.ndarray,
+        team1_pct_list: List[float],
+        team2_pct_list: List[float],
     ) -> List[np.ndarray]:
 
         out = []
@@ -350,10 +353,18 @@ class Tracker:
             for ball_id, ball_info in tracks["ball"][f_idx].items():
                 self._draw_ball_arrow(img, ball_info["bbox"])
 
-            img = self._draw_team_ball_control(img, f_idx, control_hist[: f_idx + 1])
+            img = self._draw_team_ball_control(
+                img,
+                f_idx,
+                control_hist[: f_idx + 1],
+                team1_pct_list,
+                team2_pct_list
+            )
             out.append(img)
 
         return out
+
+
 
     def _load_font(self, size: int):
         p = "camera_movement_estimator/assets/fonts/Roboto-Bold.ttf"
@@ -385,7 +396,7 @@ class Tracker:
         cv2.polylines(img, [tri], True, border, 2)
 
     # —— HUD —— ----------------------------------------------------------------
-    def _draw_team_ball_control(self, frame, idx, arr):
+    def _draw_team_ball_control(self, frame, frame_idx, control_hist, team1_pct_list, team2_pct_list):
         h, w = frame.shape[:2]
         PW, PH = 380, 150
         PX, PY = w - PW - 40, h - PH - 40
@@ -395,26 +406,20 @@ class Tracker:
                 cv2.GaussianBlur(roi, (0, 0), 15), 0.85, np.zeros_like(roi), 0.15, 0
             )
         frame[PY : PY + PH, PX : PX + PW] = self._hud_bg.copy()
-        valid = arr[arr != 0]
-        p1 = np.sum(valid == 1) / len(valid) if len(valid) else 0.5
-        p2 = 1 - p1
-        bx, by, ww, hh = PX + 50, PY + 70, 280, 22
-        cv2.rectangle(frame, (bx, by), (bx + int(ww * p1), by + hh),
-                      (255, 255, 255), -1)
-        cv2.rectangle(frame, (bx + int(ww * p1), by), (bx + ww, by + hh),
-                      (150, 150, 150), -1)
-        cv2.rectangle(frame, (bx, by), (bx + ww, by + hh),
-                      (80, 80, 80), 1, cv2.LINE_AA)
 
-        pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        d = ImageDraw.Draw(pil)
-        d.text((PX + 30, PY + 25), "Ball Control", font=self.font_big,
-               fill=(255, 255, 255, 255))
-        d.text((PX + 30, PY + 110),
-               f"Team 1: {p1 * 100:5.1f}%", font=self.font_small,
-               fill=(255, 255, 255, 255))
-        d.text((PX + 200, PY + 110),
-               f"Team 2: {p2 * 100:5.1f}%", font=self.font_small,
-               fill=(255, 255, 255, 255))
-        frame[:] = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+        p1 = team1_pct_list[frame_idx] / 100
+        p2 = team2_pct_list[frame_idx] / 100
+        bx, by, ww, hh = PX + 50, PY + 70, 280, 22
+        cv2.rectangle(frame, (bx, by), (bx + int(ww * p1), by + hh), (255, 255, 255), -1)
+        cv2.rectangle(frame, (bx + int(ww * p1), by), (bx + ww, by + hh), (150, 150, 150), -1)
+        cv2.rectangle(frame, (bx, by), (bx + ww, by + hh), (80, 80, 80), 1, cv2.LINE_AA)
+
+        # Label text
+        cv2.putText(frame, "Ball Control", (PX + 30, PY + 30),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Team 1: {p1 * 100:5.1f}%", (PX + 30, PY + 110),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Team 2: {p2 * 100:5.1f}%", (PX + 200, PY + 110),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+
         return frame

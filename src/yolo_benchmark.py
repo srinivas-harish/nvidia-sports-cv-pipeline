@@ -6,6 +6,10 @@ from utils import read_video
 from trackers.tracker import Tracker
 from assign_team.assign_team import TeamAssigner
 import csv, os
+from assign_acquisition.assign_acquisition import BallAcquisition
+
+player_assigner = BallAcquisition()
+control_history = []
 
 VIDEO_PATH = 'data/test_clip.mp4'
 print('Loading frames …')
@@ -30,59 +34,89 @@ print('\nKeys: ←/→ frame | SPACE play/pause | Q/ESC quit | R reset | B show 
 def _annotate_teams(frame_idx):
     if frame_idx == 0 and frame_tracks[0]["players"]:
         teamer.fit(frames[0], frame_tracks[0]["players"])
+
     if teamer.kmeans is None:
         return
+
     for pid, info in frame_tracks[frame_idx]["players"].items():
-        team = teamer.predict(frames[frame_idx], info["bbox"], pid)
+        # Predict once per ID
+        if pid not in teamer.player_team_cache:
+            team = teamer.predict(frames[frame_idx], info["bbox"], pid)
+            teamer.player_team_cache[pid] = team
+        else:
+            team = teamer.player_team_cache[pid]
+
         info["team"] = team
         info["team_color"] = teamer.color_for_team(team)
 
+
 def process_single_frame(frame_idx):
-    if frame_idx >= len(frames): return None
-    start = time.time()
-    tracked = tracker.track_batch([frames[frame_idx]], start_frame_idx=frame_idx)
-    end = time.time()
-    latency = (end - start) * 1000
-    inference_times.append(latency)
-
-    while len(frame_tracks) <= frame_idx:
-        frame_tracks.append({"players": {}, "referees": {}, "ball": {}})
-    frame_tracks[frame_idx] = tracked[0]
-
-    _annotate_teams(frame_idx)
-
-    control_dummy = np.zeros(frame_idx + 1, dtype=int)
-    sliced = {k: [v] for k, v in tracked[0].items()}
-    img = tracker.draw_annotations([frames[frame_idx].copy()], sliced, control_dummy)[0]
-    img = add_frame_info_overlay(img, frame_idx, tracked[0])
-    return img
+    result = process_continuous_batch(frame_idx, 1)
+    return result[0] if result else None
 
 def process_continuous_batch(start_idx, batch_size):
     end_idx = min(start_idx + batch_size, len(frames))
     frames_slice = frames[start_idx:end_idx]
-    if not frames_slice: return []
+    if not frames_slice:
+        return []
 
     start = time.time()
-    tracked = tracker.track_batch(frames_slice, start_frame_idx=start_idx)
+    tracked_batch = tracker.track_batch(frames_slice, start_frame_idx=start_idx)
     end = time.time()
     latency = ((end - start) * 1000) / len(frames_slice)
     inference_times.extend([latency] * len(frames_slice))
 
     processed = []
-    for i, (f, t) in enumerate(zip(frames_slice, tracked)):
+    team1_pct_list = []
+    team2_pct_list = []
+
+    for i, (frame, tracked) in enumerate(zip(frames_slice, tracked_batch)):
         frame_idx = start_idx + i
         while len(frame_tracks) <= frame_idx:
             frame_tracks.append({"players": {}, "referees": {}, "ball": {}})
-        frame_tracks[frame_idx] = t
+        frame_tracks[frame_idx] = tracked
 
         _annotate_teams(frame_idx)
 
-        control_dummy = np.zeros(frame_idx + 1, dtype=int)
-        sliced = {k: [v] for k, v in t.items()}
-        img = tracker.draw_annotations([f.copy()], sliced, control_dummy)[0]
-        img = add_frame_info_overlay(img, frame_idx, t)
+        # Assign ball and update control history
+        team = 0
+        if tracked["ball"]:
+            ball_info = list(tracked["ball"].values())[0]
+            assigned_pid = player_assigner.assign_ball_to_player(tracked["players"], ball_info["bbox"])
+            if assigned_pid != -1:
+                tracked["players"][assigned_pid]["has_ball"] = True
+                team = tracked["players"].get(assigned_pid, {}).get("team", 0)
+        control_history.append(team)
+
+        # Compute possession percentages
+        valid = [t for t in control_history if t in (1, 2)]
+        total_valid = len(valid)
+        if total_valid > 0:
+            team1_pct = (valid.count(1) / total_valid) * 100
+            team2_pct = (valid.count(2) / total_valid) * 100
+            print(f"[Frame {frame_idx}] ⚽ Possession → Team 1: {team1_pct:.1f}%, Team 2: {team2_pct:.1f}%")
+        else:
+            team1_pct = team2_pct = 50.0
+            print(f"[Frame {frame_idx}] ⚽ Possession → No valid team frames yet")
+
+        team1_pct_list.append(team1_pct)
+        team2_pct_list.append(team2_pct)
+
+        sliced = {k: [v] for k, v in tracked.items()}
+        img = tracker.draw_annotations(
+            [frame.copy()],
+            sliced,
+            np.array(control_history),
+            team1_pct_list,
+            team2_pct_list
+        )[0]
+        img = add_frame_info_overlay(img, frame_idx, tracked)
         processed.append(img)
+
     return processed
+
+
+
 
 
 def add_frame_info_overlay(img, frame_idx, tracks):
@@ -160,6 +194,8 @@ def show_ball_statistics():
 def reset_tracking():
     global frame_tracks, inference_times, idx
     frame_tracks.clear()
+    team_ball_control.clear()
+
     inference_times.clear()
     tracker.ball_tracker = tracker.__class__.BallTracker(max_lost_frames=8, ball_radius=16)
     tracker.active_tracks.clear()
@@ -222,8 +258,47 @@ except KeyboardInterrupt:
     print("\n[INFO] Ctrl+C pressed — Exiting cleanly...")
 
 finally:
+    # Final Ball Possession Assignment
+    player_assigner = BallAcquisition()
+    team_ball_control = []
+    last_valid_team = 0
+
+    for frame_num, frame_data in enumerate(frame_tracks):
+        players = frame_data.get("players", {})
+        ball_info = frame_data.get("ball", {}).get(1, {})
+        ball_bbox = ball_info.get("bbox", None)
+
+        if ball_bbox and isinstance(ball_bbox, (list, tuple)) and len(ball_bbox) == 4:
+            assigned_player = player_assigner.assign_ball_to_player(players, ball_bbox)
+        else:
+            assigned_player = -1
+            print(f"[Frame {frame_num}] ⚠️  Invalid/missing ball bbox → Neutral")
+
+        if assigned_player != -1:
+            players[assigned_player]["has_ball"] = True
+            last_valid_team = players[assigned_player].get("team", 0)
+            team_ball_control.append(last_valid_team)
+            print(f"[Frame {frame_num}] ✅ Ball → Player {assigned_player}, Team {last_valid_team}")
+        else:
+            team_ball_control.append(0)
+            print(f"[Frame {frame_num}] ⚪ No player assigned → Neutral")
+
+    team_ball_control = np.array(team_ball_control)
+ 
+    control_history[:] = team_ball_control.tolist()
+
+    # Summary
+    print("\n=== Team Ball Possession Summary ===")
+    print("Unique values:", np.unique(team_ball_control))
+    print("First 10:", team_ball_control[:10])
+    print(f"Team 1: {np.sum(team_ball_control == 1)} frames")
+    print(f"Team 2: {np.sum(team_ball_control == 2)} frames")
+    print(f"Neutral: {np.sum(team_ball_control == 0)} frames")
+
+    # Proceed with original clean-up
     cv2.destroyAllWindows()
     show_ball_statistics()
+
     if inference_times:
         avg_time = np.mean(inference_times[100:700]) if len(inference_times) > 700 else np.mean(inference_times)
         print(f"\n***Average YOLOv9c+Tracking time: {avg_time:.2f} ms per frame")
