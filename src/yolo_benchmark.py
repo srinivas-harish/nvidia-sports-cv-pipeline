@@ -9,7 +9,7 @@ VIDEO_PATH = 'data/test_clip.mp4'
 print('Loading frames …')
 frames = read_video(VIDEO_PATH)
 
-tracker = Tracker('models/best_backup_epoch32.pt')  # TensorRT engine to be rendered
+tracker = Tracker('models/128060ep.pt')  # TensorRT engine to be rendered
 
 # Viewer state
 N_FR = len(frames)

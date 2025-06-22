@@ -50,7 +50,7 @@ class Tracker:
         self.byte_tracker = sv.ByteTrack(
             track_activation_threshold=0.25,   
             lost_track_buffer=30,              
-            minimum_matching_threshold=0.8,    
+            minimum_matching_threshold=0.95,    # IMP value*
             frame_rate=30
         )
         
@@ -58,7 +58,7 @@ class Tracker:
         self.active_tracks: Dict[int, Dict] = {}  # raw_tid -> {stable_id, center, last_seen}
         self.stable_id_history: Dict[int, Tuple[float, float]] = {}  # stable_id -> last_known_center
         self.next_stable_id = 1
-        self.max_lost_frames = 60  
+        self.max_lost_frames = 300
         self.proximity_threshold = 100  
 
         # ball smoothing
