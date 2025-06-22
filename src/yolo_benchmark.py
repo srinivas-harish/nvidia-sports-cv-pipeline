@@ -106,14 +106,15 @@ def process_continuous_batch(start_idx, batch_size):
         img = tracker.draw_annotations(
             [frame.copy()],
             sliced,
-            np.array(control_history),
-            team1_pct_list,
-            team2_pct_list
+            np.array(control_history[:frame_idx + 1]),
+            team1_pct_list[:i + 1],
+            team2_pct_list[:i + 1]
         )[0]
         img = add_frame_info_overlay(img, frame_idx, tracked)
         processed.append(img)
 
     return processed
+
 
 
 

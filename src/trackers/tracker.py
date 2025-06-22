@@ -303,7 +303,6 @@ class Tracker:
 
     #  DRAWING
     # ─────────────────────────────────────────────────────────────────────────
-
     def draw_annotations(
         self,
         frames: List[np.ndarray],
@@ -324,10 +323,22 @@ class Tracker:
                 xc, _ = get_center_of_bbox(bb)
                 y2 = int(bb[3])
                 w = get_bbox_width(bb)
-                axes = (int(w * 0.6), int(w * 0.22))
-                cv2.ellipse(halo, (xc, y2), axes, 0, 0, 360, col, -1, cv2.LINE_AA)
+                # Clamp width to avoid drastic halo size changes
+                w_clamped = max(32, min(w, 40))  # Adjust min/max bounds as needed
+                axes = (int(w_clamped * 0.6), int(w_clamped * 0.22))
+
+                # Soft white glow if has ball
+                if info.get("has_ball", False):
+                    # Draw white outer glow first
+                    cv2.ellipse(halo, (xc, y2), (axes[0] + 12, axes[1] + 6), 0, 0, 360, (255, 255, 255), -1, cv2.LINE_AA)
+                    cv2.ellipse(img, (xc, y2), (axes[0] + 12, axes[1] + 6), 0, -45, 235, (255, 255, 255), 3, cv2.LINE_AA)
+                    # Draw normal team color fill
+                    cv2.ellipse(halo, (xc, y2), axes, 0, 0, 360, col, -1, cv2.LINE_AA)
+
+                # Outer stroke ring (team color)
                 cv2.ellipse(img, (xc, y2), axes, 0, -45, 235, col, 3, cv2.LINE_AA)
 
+                # ID box
                 txt = str(pid)
                 (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_DUPLEX, 0.65, 2)
                 pad, bx, by = 6, xc - (tw + 2 * 6) // 2, y2 + 14
@@ -340,12 +351,10 @@ class Tracker:
                 bb = ref["bbox"]
                 xc, _ = get_center_of_bbox(bb)
                 y2 = int(bb[3])
-                w = get_bbox_width(bb)
-                axes = (int(w * 0.6), int(w * 0.22))
-                cv2.ellipse(halo, (xc, y2), axes, 0, 0, 360,
-                            (0, 255, 255), -1, cv2.LINE_AA)
-                cv2.ellipse(img, (xc, y2), axes, 0, -45, 235,
-                            (0, 255, 255), 3, cv2.LINE_AA)
+                # Fixed clean minimal size
+                axes = (22, 8)
+                cv2.ellipse(halo, (xc, y2), axes, 0, 0, 360, (0, 255, 255), -1, cv2.LINE_AA)
+                cv2.ellipse(img, (xc, y2), axes, 0, -45, 235, (0, 255, 255), 3, cv2.LINE_AA)
 
             img = cv2.addWeighted(halo, 0.35, img, 0.65, 0)
 
@@ -363,6 +372,7 @@ class Tracker:
             out.append(img)
 
         return out
+
 
 
 
@@ -407,8 +417,10 @@ class Tracker:
             )
         frame[PY : PY + PH, PX : PX + PW] = self._hud_bg.copy()
 
-        p1 = team1_pct_list[frame_idx] / 100
-        p2 = team2_pct_list[frame_idx] / 100
+        local_idx = len(team1_pct_list) - 1  # Always take the latest value in the batch
+        p1 = team1_pct_list[local_idx] / 100
+        p2 = team2_pct_list[local_idx] / 100
+
         bx, by, ww, hh = PX + 50, PY + 70, 280, 22
         cv2.rectangle(frame, (bx, by), (bx + int(ww * p1), by + hh), (255, 255, 255), -1)
         cv2.rectangle(frame, (bx + int(ww * p1), by), (bx + ww, by + hh), (150, 150, 150), -1)
