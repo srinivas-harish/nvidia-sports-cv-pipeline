@@ -1,4 +1,3 @@
-# tracker.py – Improved ID tracking + fast overlay + Roboto HUD
 from ultralytics import YOLO
 import supervision as sv
 import pickle, os, sys, cv2, torch
@@ -22,7 +21,7 @@ class Tracker:
         self.font_big = self.load_font(24)
         self.font_small = self.load_font(22)
         self._hud_bg = None
-        self.max_lost_frames = 3
+        self.max_lost_frames = 150
         self.id_map = {}
         self.id_last_seen = {}
         self.next_id = 1
@@ -192,37 +191,6 @@ class Tracker:
             img = self.draw_team_ball_control(img, f, control if len(frames) == 1 else control[:f+1])
             out.append(img)
         return out
-
-    def track_frame(self, frame): 
-        results = self.model.predict(frame, device=0, half=self.model_path.endswith('.pt'), imgsz=1280, conf=0.3, verbose=False)[0]
-        detections = sv.Detections.from_ultralytics(results)
-
-        names, inv = results.names, {v: k for k, v in results.names.items()}
-        for i, cid in enumerate(detections.class_id):
-            if names[cid] == 'goalkeeper':
-                detections.class_id[i] = inv['player']
-
-        tracks = self.tracker.update_with_detections(detections)
-
-        frame_tracks = {'players': {}, 'referees': {}, 'ball': {}}
-        for d in tracks:
-            bb, cid, raw_tid = d[0].tolist(), d[3], d[4]
-            center = get_foot_position(bb)
-
-            if cid == inv['player']:
-                stable_id = self.match_id(center, self.frame_idx)
-                frame_tracks['players'][stable_id] = {'bbox': bb}
-                self.id_last_seen[stable_id] = (center, self.frame_idx)
-            elif cid == inv['referee']:
-                frame_tracks['referees'][raw_tid] = {'bbox': bb}
-
-        for d in detections:
-            if d[3] == inv['ball']:
-                frame_tracks['ball'][1] = {'bbox': d[0].tolist()}
-
-        self.frame_idx += 1
-        return frame_tracks
-
 
     def track_batch(self, frames):
         results = self.model.predict(
