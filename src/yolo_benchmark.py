@@ -7,13 +7,18 @@ from trackers.tracker import Tracker
 from assign_team.assign_team import TeamAssigner
 import csv, os
 from assign_acquisition.assign_acquisition import BallAcquisition
+from camera_motion.camera_motion import CameraMotionEstimator
 
 player_assigner = BallAcquisition()
 control_history = []
 
 VIDEO_PATH = 'data/test_clip.mp4'
+#VIDEO_PATH = 'data/test_clip_2_cut.mp4'
+
 print('Loading frames …')
 frames = read_video(VIDEO_PATH)
+cam_est = CameraMotionEstimator(frames[0])
+
 
 tracker = Tracker('models/128060ep.pt')  # TensorRT engine to be rendered
 teamer = TeamAssigner()
@@ -76,6 +81,16 @@ def process_continuous_batch(start_idx, batch_size):
             frame_tracks.append({"players": {}, "referees": {}, "ball": {}})
         frame_tracks[frame_idx] = tracked
 
+        tracker.add_position_to_tracks(frame_tracks)
+
+        # Real-time camera motion estimation and adjustment
+        dx, dy = cam_est.estimate(frames[frame_idx])
+        cam_est.apply_adjustment(frame_tracks[frame_idx], frame_idx, dx, dy)
+
+
+
+
+
         _annotate_teams(frame_idx)
 
         # Assign ball and update control history
@@ -94,10 +109,10 @@ def process_continuous_batch(start_idx, batch_size):
         if total_valid > 0:
             team1_pct = (valid.count(1) / total_valid) * 100
             team2_pct = (valid.count(2) / total_valid) * 100
-            print(f"[Frame {frame_idx}] ⚽ Possession → Team 1: {team1_pct:.1f}%, Team 2: {team2_pct:.1f}%")
+            #print(f"[Frame {frame_idx}] ⚽ Possession → Team 1: {team1_pct:.1f}%, Team 2: {team2_pct:.1f}%")
         else:
             team1_pct = team2_pct = 50.0
-            print(f"[Frame {frame_idx}] ⚽ Possession → No valid team frames yet")
+            #print(f"[Frame {frame_idx}] ⚽ Possession → No valid team frames yet")
 
         team1_pct_list.append(team1_pct)
         team2_pct_list.append(team2_pct)
@@ -110,6 +125,13 @@ def process_continuous_batch(start_idx, batch_size):
             team1_pct_list[:i + 1],
             team2_pct_list[:i + 1]
         )[0]
+
+
+        # DRAW CAMERA MOTION
+        img = cam_est.draw_camera_motion(img, dx, dy)
+
+
+
         img = add_frame_info_overlay(img, frame_idx, tracked)
         processed.append(img)
 
@@ -205,6 +227,18 @@ def reset_tracking():
     teamer.reset()
     idx = 0
     print("Tracking state reset")
+
+
+
+
+
+
+
+
+
+####
+
+
 
 try:
     running = True

@@ -373,6 +373,18 @@ class Tracker:
 
         return out
 
+    def add_position_to_tracks(self, frame_tracks: List[Dict[str, Dict[int, Dict]]]):
+        for obj in ["players", "referees", "ball"]:
+            for frame_idx, frame_data in enumerate(frame_tracks):
+                for tid, track_info in frame_data[obj].items():
+                    bbox = track_info.get("bbox")
+                    if not bbox:
+                        continue
+                    if obj == "ball":
+                        center = get_center_of_bbox(bbox)
+                    else:
+                        center = get_foot_position(bbox)
+                    track_info["position"] = center
 
 
 
