@@ -20,7 +20,20 @@ frames = read_video(VIDEO_PATH)
 cam_est = CameraMotionEstimator(frames[0])
 
 
-tracker = Tracker('models/128060ep.pt')  # TensorRT engine to be rendered
+#tracker = Tracker('models/128060.pt')  # TensorRT engine to be rendered
+
+
+tracker = Tracker(
+    player_model_path='models/128060ep.pt',
+    ball_model_path='models/128060ep_1class.pt',
+    batch_size=4,  
+    player_conf=0.25,
+    player_iou=0.45,
+    ball_conf=0.3,  # Lower threshold for ball to increase sensitivity
+    ball_iou=0.5
+)
+
+
 teamer = TeamAssigner()
 
 N_FR = len(frames)
