@@ -14,7 +14,7 @@ from assign_acquisition.assign_acquisition import BallAcquisition
 torch.backends.cudnn.benchmark = True
 
 class _Kalman2D:
-    # Unchanged from your code
+   
     def __init__(self):
         kf = cv2.KalmanFilter(4, 2, 0, cv2.CV_32F)
         kf.measurementMatrix[:]    = np.eye(2, 4, dtype=np.float32)
@@ -48,7 +48,7 @@ class _Kalman2D:
         return self.last_prediction or (0.0, 0.0)
 
 class BallTracker:
-    # Unchanged from your code
+    
     def __init__(self, max_lost_frames: int = 12, ball_radius: int = 16, buffer_size: int = 25):
         self.kalman = _Kalman2D()
         self.max_lost_frames = max_lost_frames
@@ -227,19 +227,27 @@ class Tracker:
         return batch_tracks
 
     def _extract_ball_bbox(self, dets, inv):
-        # Handle ball model with only 1 class - assume it's the ball class
+        """Extracts the bounding box of the ball from full detections with multiple classes."""
         if len(dets.xyxy) == 0:
             return None
-        
-        # Since there's only one class, take the detection with highest confidence
-        if len(dets.xyxy) > 0:
-            best_idx = int(np.argmax(dets.confidence))
-            return dets.xyxy[best_idx].tolist()
-        
-        return None
+
+        ball_class_id = inv.get("ball", 0)
+        candidates = [
+            (i, det) for i, det in enumerate(dets.class_id)
+            if int(det) == ball_class_id
+        ]
+
+        if not candidates:
+            return None
+
+        best_idx = max(candidates, key=lambda x: dets.confidence[x[0]])[0]
+        return dets.xyxy[best_idx].tolist()
+
+
 
     def _get_stable_id(self, raw_tid: int, center: Tuple[float, float], frame_idx: int) -> int:
-        # Unchanged
+      
+      
         if raw_tid in self.active_tracks:
             track_info = self.active_tracks[raw_tid]
             track_info['center'] = center
@@ -270,7 +278,7 @@ class Tracker:
         return stable_id
 
     def _cleanup_lost_tracks(self, current_raw_tids: set, frame_idx: int):
-        # Unchanged
+        
         lost_raw_tids = []
         for raw_tid, track_info in self.active_tracks.items():
             if raw_tid not in current_raw_tids:
@@ -281,7 +289,7 @@ class Tracker:
 
     def draw_annotations(self, frames: List[np.ndarray], tracks: Dict[str, List[Dict[int, Dict]]], 
                         control_hist: np.ndarray, team1_pct_list: List[float], team2_pct_list: List[float]) -> List[np.ndarray]:
-        # Unchanged
+        
         out = []
         for f_idx, frame in enumerate(frames):
             img, halo = frame.copy(), np.zeros_like(frame)
@@ -318,7 +326,7 @@ class Tracker:
         return out
 
     def add_position_to_tracks(self, frame_tracks: List[Dict[str, Dict[int, Dict]]]):
-        # Unchanged
+        
         for obj in ["players", "referees", "ball"]:
             for frame_idx, frame_data in enumerate(frame_tracks):
                 for tid, track_info in frame_data[obj].items():
@@ -332,14 +340,14 @@ class Tracker:
                     track_info["position"] = center
 
     def _load_font(self, size: int):
-        # Unchanged
+        
         p = "camera_movement_estimator/assets/fonts/Roboto-Bold.ttf"
         if not os.path.isfile(p):
             p = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         return ImageFont.truetype(p, size)
 
     def _draw_ball_arrow(self, img: np.ndarray, np_bb: List[float]):
-        # Unchanged
+        
         cx = int((np_bb[0] + np_bb[2]) / 2)
         cy = int((np_bb[1] + np_bb[3]) / 2)
         arrow_tip_y = cy - 25
@@ -351,7 +359,7 @@ class Tracker:
         cv2.polylines(img, [tri], True, border, 2)
 
     def _draw_team_ball_control(self, frame, frame_idx, control_hist, team1_pct_list, team2_pct_list):
-        # Unchanged
+       
         h, w = frame.shape[:2]
         PW, PH = 380, 150
         PX, PY = w - PW - 40, h - PH - 40
