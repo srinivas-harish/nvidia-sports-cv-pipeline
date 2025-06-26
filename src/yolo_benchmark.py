@@ -25,7 +25,9 @@ from overlays.overlay_helper import (
 # ------- Constants -------
 VIDEO_PATH = 'data/test_clip.mp4'
 MODEL_PATH = 'models/128060ep.pt'
-BATCH_SIZE = 16
+BATCH_SIZE = 1
+FONT_CACHE = ImageFont.truetype("DejaVuSans.ttf", size=16)
+
 
 print('Loading frames …')
 frames = read_video(VIDEO_PATH)
@@ -41,9 +43,10 @@ N_FR = len(frames)
 
 # ------- Global State & Player Tracking -------
 idx = 0
-play = False
-inference_times = []
+play = False 
 frame_tracks = []
+frame_times = []  # Store individual frame processing times
+fps_history = []  # Store FPS calculations
 control_history = []
 player_possession = {}  # {player_id: {'times_held': int, 'total_frames': int}}
 selected_player = None  # Store currently selected player for stats display
@@ -162,17 +165,24 @@ def process_single_frame(frame_idx): # TO BE REMOVED
     return result[0] if result else None
 
 def process_continuous_batch(start_idx, batch_size):
+    timing_log = {}
+
+     
+
     global player_possession
     end_idx = min(start_idx + batch_size, len(frames))
     frames_slice = frames[start_idx:end_idx]
     if not frames_slice:
         return []
 
+    # ------- TIMING - Fixed to track per-frame 
     start = time.time()
     tracked_batch = tracker.track_batch(frames_slice, start_frame_idx=start_idx)
-    end = time.time()
-    latency = ((end - start) * 1000) / len(frames_slice)
-    inference_times.extend([latency] * len(frames_slice))
+    timing_log['inference'] = time.time() - start
+
+ 
+
+
 
     for i, tracked in enumerate(tracked_batch):
         frame_idx = start_idx + i
@@ -180,24 +190,37 @@ def process_continuous_batch(start_idx, batch_size):
             frame_tracks.append({"players": {}, "referees": {}, "ball": {}})
         frame_tracks[frame_idx] = tracked
 
-    tracker.add_position_to_tracks(frame_tracks)
+    # ------- Add position to tracks
+    start = time.time()
+    tracker.add_position_to_tracks(tracked_batch)
+    timing_log['add_position'] = time.time() - start
 
+
+    # ------- Camera estimation + adjustment
+    start = time.time()
     for i in range(len(frames_slice)):
         frame_idx = start_idx + i
         dx, dy = cam_est.estimate(frames[frame_idx])
         cam_est.apply_adjustment(frame_tracks[frame_idx], frame_idx, dx, dy)
+    timing_log['camera_motion'] = time.time() - start
 
-    objectwise_tracks = reshape_frame_tracks(frame_tracks)
+    # ------- View transformation + speed/distance
+    start = time.time()
+    objectwise_tracks = reshape_frame_tracks(tracked_batch)
     view_transformer.add_transformed_position_to_tracks(objectwise_tracks)
     speed_estimator.add_speed_and_distance_to_tracks(objectwise_tracks)
+    timing_log['transform+speed'] = time.time() - start
 
     processed = []
     team1_pct_list = []
     team2_pct_list = []
 
-    # Track previous possession state
+    # ------- Track previous possession state
     prev_player = None
     current_streak = 0
+
+    # ------- Annotate and draw overlays
+    start = time.time()
 
     for i, (frame, tracked) in enumerate(zip(frames_slice, tracked_batch)):
         frame_idx = start_idx + i
@@ -253,8 +276,24 @@ def process_continuous_batch(start_idx, batch_size):
 
         img = add_toggle_display(img, TOGGLES)
         processed.append(img)
+    timing_log['overlay+drawing'] = time.time() - start
+
+
+    print(f"\n⏱ Batch {start_idx}-{end_idx-1} Timing Breakdown:")
+    for k, v in timing_log.items():
+        print(f"  {k:<18}: {v*1000:.2f} ms total, {v/len(frames_slice)*1000:.2f} ms/frame")
+
 
     return processed
+
+
+
+
+
+
+
+
+
 
 
 # ------- Stats and Utility Functions -------
@@ -302,9 +341,8 @@ def show_ball_statistics():
     print("=" * 33)
 
 def reset_tracking():
-    global frame_tracks, inference_times, idx, player_possession, selected_player
-    frame_tracks.clear()
-    inference_times.clear()
+    global frame_tracks, idx, player_possession, selected_player
+    frame_tracks.clear() 
     player_possession.clear()
     selected_player = None
     tracker.ball_tracker = tracker.__class__.BallTracker(max_lost_frames=8, ball_radius=16)
@@ -316,6 +354,9 @@ def reset_tracking():
     print("Tracking state reset")
 
 # ------- MAIN EXECUTION LOOP -------
+global_start_time = time.time()
+total_frames_processed = 0
+
 
 try:
     running = True
@@ -324,9 +365,20 @@ try:
         start_time = time.time()
         if play:
             batch_size = min(BATCH_SIZE, N_FR - idx)
+            
+            # Time the entire batch processing
+            batch_start = time.time()
             processed_batch = process_continuous_batch(idx, batch_size)
+            batch_end = time.time()
+            
+            total_batch_time_ms = (batch_end - batch_start) * 1000
+            actual_fps = len(processed_batch) / ((batch_end - batch_start)) if (batch_end - batch_start) > 0 else 0
+            
+            #print(f"Batch {idx}-{idx+len(processed_batch)-1}: {total_batch_time_ms:.2f}ms total, {total_batch_time_ms/len(processed_batch):.2f}ms per frame, ACTUAL FPS: {actual_fps:.1f}")
+            
             for i, processed in enumerate(processed_batch):
                 cv2.imshow('Demo', processed)
+                
                 key = cv2.waitKey(1) & 0xFF
                 if not handle_key_press(key):
                     running = False
@@ -338,14 +390,27 @@ try:
                     break
             else:
                 idx += len(processed_batch)
+                total_frames_processed += len(processed_batch)
+                
         else:
             # Use batch processing even when paused, but only show current frame
             batch_size = min(BATCH_SIZE, N_FR - idx)
+            
+            # Time the processing even when paused
+            frame_start = time.time()
             processed_batch = process_continuous_batch(idx, batch_size)
+            frame_end = time.time()
+            
+            processing_time_ms = (frame_end - frame_start) * 1000
+            actual_fps = len(processed_batch) / (frame_end - frame_start) if (frame_end - frame_start) > 0 else 0
+            
+            print(f"Paused - Frame {idx}: {processing_time_ms:.2f}ms processing, ACTUAL FPS: {actual_fps:.1f}")
             
             # Show only the first frame (current frame)
             if processed_batch:
                 cv2.imshow('Demo', processed_batch[0])
+                total_frames_processed += len(processed_batch)
+
             
             key = cv2.waitKey(0) & 0xFF
             if not handle_key_press(key):
@@ -368,16 +433,16 @@ finally:
             assigned_pid = player_assigner.assign_ball_to_player(players, ball_bbox)
         else:
             assigned_pid = -1
-            print(f"[Frame {frame_num}] ⚠️ Invalid/missing ball bbox → Neutral")
+            #print(f"[Frame {frame_num}] ⚠️ Invalid/missing ball bbox → Neutral")
 
         if assigned_pid != -1:
             players[assigned_pid]["has_ball"] = True
             last_valid_team = players[assigned_pid].get("team", 0)
             team_ball_control.append(last_valid_team)
-            print(f"[Frame {frame_num}] ✅ Ball → Player {assigned_pid}, Team {last_valid_team}")
+            #print(f"[Frame {frame_num}] ✅ Ball → Player {assigned_pid}, Team {last_valid_team}")
         else:
             team_ball_control.append(0)
-            print(f"[Frame {frame_num}] ⚪ No player assigned → Neutral")
+            #print(f"[Frame {frame_num}] ⚪ No player assigned → Neutral")
 
     team_ball_control = np.array(team_ball_control)
     control_history[:] = team_ball_control.tolist()
@@ -392,18 +457,16 @@ finally:
     cv2.destroyAllWindows()
     show_ball_statistics()
 
-    if inference_times:
-        avg_time = np.mean(inference_times[100:700]) if len(inference_times) > 700 else np.mean(inference_times)
-        print(f"\n***Average YOLOv9c+Tracking time: {avg_time:.2f} ms per frame")
-        csv_path = os.path.join(os.getcwd(), "inference_latency.csv")
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(["Frame Index", "Latency (ms)", "Ball Status"])
-            for i, latency in enumerate(inference_times):
-                ball_status = "unknown"
-                if i < len(frame_tracks) and frame_tracks[i] and frame_tracks[i]["ball"]:
-                    ball_info = list(frame_tracks[i]["ball"].values())[0]
-                    ball_status = "interpolated" if ball_info.get("interpolated", False) else "detected"
-                elif i < len(frame_tracks) and frame_tracks[i]:
-                    ball_status = "missing"
-                writer.writerow([i, latency, ball_status])
+    global_end_time = time.time()
+    total_time_sec = global_end_time - global_start_time
+
+    if total_frames_processed > 0:
+        avg_latency_ms = (total_time_sec / total_frames_processed) * 1000
+        avg_fps = total_frames_processed / total_time_sec
+        print("\n=== Overall Performance Stats ===")
+        print(f"Total frames processed: {total_frames_processed}")
+        print(f"Total time taken: {total_time_sec:.2f} sec")
+        print(f"Average latency per frame: {avg_latency_ms:.2f} ms")
+        print(f"Average FPS: {avg_fps:.2f}")
+    else:
+        print("No frames were processed.")
