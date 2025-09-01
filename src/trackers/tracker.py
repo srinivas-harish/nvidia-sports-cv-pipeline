@@ -6,6 +6,7 @@ from collections import deque
 import cv2, numpy as np, torch, supervision as sv
 from ultralytics import YOLO
 from PIL import Image, ImageDraw, ImageFont
+from overlays.overlay_helper import draw_annotations
 
 # project-local helpers
 sys.path.append(os.path.abspath(os.path.join(__file__, "..", "..")))
@@ -140,6 +141,7 @@ class Tracker:
             self.ball_model.to("cuda", non_blocking=True).half()
         self.ball_conf = ball_conf
         self.ball_iou = ball_iou
+        self._hud_bg_cache = {"bg": None}
 
         self.batch_size = batch_size
         self.byte_tracker = sv.ByteTrack(
@@ -287,43 +289,12 @@ class Tracker:
         for raw_tid in lost_raw_tids:
             self.active_tracks.pop(raw_tid, None)
 
-    def draw_annotations(self, frames: List[np.ndarray], tracks: Dict[str, List[Dict[int, Dict]]], 
-                        control_hist: np.ndarray, team1_pct_list: List[float], team2_pct_list: List[float]) -> List[np.ndarray]:
-        
-        out = []
-        for f_idx, frame in enumerate(frames):
-            img, halo = frame.copy(), np.zeros_like(frame)
-            for pid, info in tracks["players"][f_idx].items():
-                col = info.get("team_color", (0, 0, 255))
-                bb = info["bbox"]
-                xc, _ = get_center_of_bbox(bb)
-                y2 = int(bb[3])
-                w = get_bbox_width(bb)
-                w_clamped = max(32, min(w, 40))
-                axes = (int(w_clamped * 0.6), int(w_clamped * 0.22))
-                if info.get("has_ball", False):
-                    cv2.ellipse(halo, (xc, y2), (axes[0] + 12, axes[1] + 6), 0, 0, 360, (255, 255, 255), -1, cv2.LINE_AA)
-                    cv2.ellipse(img, (xc, y2), (axes[0] + 12, axes[1] + 6), 0, -45, 235, (255, 255, 255), 3, cv2.LINE_AA)
-                    cv2.ellipse(halo, (xc, y2), axes, 0, 0, 360, col, -1, cv2.LINE_AA)
-                cv2.ellipse(img, (xc, y2), axes, 0, -45, 235, col, 3, cv2.LINE_AA)
-                txt = str(pid)
-                (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_DUPLEX, 0.65, 2)
-                pad, bx, by = 6, xc - (tw + 2 * 6) // 2, y2 + 14
-                cv2.rectangle(img, (bx, by), (bx + tw + 2 * pad, by + th + pad), col, -1)
-                cv2.putText(img, txt, (bx + pad, by + th), cv2.FONT_HERSHEY_DUPLEX, 0.65, (0, 0, 0), 1, cv2.LINE_AA)
-            for ref in tracks["referees"][f_idx].values():
-                bb = ref["bbox"]
-                xc, _ = get_center_of_bbox(bb)
-                y2 = int(bb[3])
-                axes = (22, 8)
-                cv2.ellipse(halo, (xc, y2), axes, 0, 0, 360, (0, 255, 255), -1, cv2.LINE_AA)
-                cv2.ellipse(img, (xc, y2), axes, 0, -45, 235, (0, 255, 255), 3, cv2.LINE_AA)
-            img = cv2.addWeighted(halo, 0.35, img, 0.65, 0)
-            for ball_id, ball_info in tracks["ball"][f_idx].items():
-                self._draw_ball_arrow(img, ball_info["bbox"])
-            img = self._draw_team_ball_control(img, f_idx, control_hist, team1_pct_list, team2_pct_list)
-            out.append(img)
-        return out
+    def draw_annotations(self, frames, tracks, control_hist, team1_pct_list, team2_pct_list):
+        return draw_annotations(frames, tracks, control_hist, team1_pct_list, team2_pct_list,
+                                self.font_big, self.font_small, self._hud_bg_cache)
+
+
+
 
     def add_position_to_tracks(self, frame_tracks: List[Dict[str, Dict[int, Dict]]]):
         
@@ -345,41 +316,3 @@ class Tracker:
         if not os.path.isfile(p):
             p = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         return ImageFont.truetype(p, size)
-
-    def _draw_ball_arrow(self, img: np.ndarray, np_bb: List[float]):
-        
-        cx = int((np_bb[0] + np_bb[2]) / 2)
-        cy = int((np_bb[1] + np_bb[3]) / 2)
-        arrow_tip_y = cy - 25
-        tri = np.array(
-            [[cx, arrow_tip_y], [cx - 12, arrow_tip_y - 22], [cx + 12, arrow_tip_y - 22]], np.int32
-        )
-        color, border = (0, 255, 0), (0, 0, 0)
-        cv2.fillPoly(img, [tri], color)
-        cv2.polylines(img, [tri], True, border, 2)
-
-    def _draw_team_ball_control(self, frame, frame_idx, control_hist, team1_pct_list, team2_pct_list):
-       
-        h, w = frame.shape[:2]
-        PW, PH = 380, 150
-        PX, PY = w - PW - 40, h - PH - 40
-        if self._hud_bg is None:
-            roi = frame[PY : PY + PH, PX : PX + PW]
-            self._hud_bg = cv2.addWeighted(
-                cv2.GaussianBlur(roi, (0, 0), 15), 0.85, np.zeros_like(roi), 0.15, 0
-            )
-        frame[PY : PY + PH, PX : PX + PW] = self._hud_bg.copy()
-        local_idx = len(team1_pct_list) - 1
-        p1 = team1_pct_list[local_idx] / 100
-        p2 = team2_pct_list[local_idx] / 100
-        bx, by, ww, hh = PX + 50, PY + 70, 280, 22
-        cv2.rectangle(frame, (bx, by), (bx + int(ww * p1), by + hh), (255, 255, 255), -1)
-        cv2.rectangle(frame, (bx + int(ww * p1), by), (bx + ww, by + hh), (150, 150, 150), -1)
-        cv2.rectangle(frame, (bx, by), (bx + ww, by + hh), (80, 80, 80), 1, cv2.LINE_AA)
-        cv2.putText(frame, "Ball Control", (PX + 30, PY + 30),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"Team 1: {p1 * 100:5.1f}%", (PX + 30, PY + 110),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"Team 2: {p2 * 100:5.1f}%", (PX + 200, PY + 110),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
-        return frame

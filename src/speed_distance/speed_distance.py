@@ -54,7 +54,6 @@ class ViewTransformer:
                     if transformed is not None:
                         tracks[obj][frame_idx][tid]['position_transformed'] = transformed.squeeze().tolist()
 
-
 class SpeedAndDistanceEstimator:
     def __init__(self, frame_rate=30, smoothing_window=5, max_reasonable_speed=40.0, frame_window=None):
         self.frame_rate = frame_rate
@@ -72,28 +71,27 @@ class SpeedAndDistanceEstimator:
         
         # Pixel to meter conversion factor (rough approximation)
         self.pixel_to_meter_ratio = 10.0  # Adjust based on your video resolution and field view
-        
+    
     def _calculate_instantaneous_speed(self, positions, frame_indices, use_pixel_coords=False):
         """Calculate speed using multiple position points for better accuracy"""
         if len(positions) < 2:
-            return None
+            return 0.0
             
         # Use the most recent positions for calculation
         recent_positions = positions[-min(self.smoothing_window, len(positions)):]
         recent_indices = frame_indices[-min(self.smoothing_window, len(frame_indices)):]
         
         if len(recent_positions) < 2:
-            return None
+            return 0.0
             
         # Calculate distance over the time window
-        total_distance = 0
+        total_distance = 0.0
         for i in range(1, len(recent_positions)):
             if use_pixel_coords:
                 # For pixel coordinates, use a simple conversion factor
-                # Assuming roughly 10 pixels per meter (this is approximate)
                 pixel_distance = np.sqrt((recent_positions[i][0] - recent_positions[i-1][0])**2 + 
                                        (recent_positions[i][1] - recent_positions[i-1][1])**2)
-                dist = pixel_distance / 10.0  # Convert pixels to meters (rough approximation)
+                dist = pixel_distance / self.pixel_to_meter_ratio
             else:
                 # Use real-world coordinates
                 dist = measure_distance(recent_positions[i-1], recent_positions[i])
@@ -103,15 +101,15 @@ class SpeedAndDistanceEstimator:
         time_diff = (recent_indices[-1] - recent_indices[0]) / self.frame_rate
         
         if time_diff <= 0:
-            return None
+            return 0.0
             
         # Speed in m/s, then convert to km/h
         speed_mps = total_distance / time_diff
         speed_kmph = speed_mps * 3.6
         
-        # Apply reasonable speed limits (professional players rarely exceed 35-40 km/h)
+        # Apply reasonable speed limits
         if speed_kmph > self.max_reasonable_speed:
-            return None
+            return 0.0
             
         return speed_kmph
     
@@ -119,30 +117,28 @@ class SpeedAndDistanceEstimator:
         """Calculate distance increment between two positions"""
         try:
             if use_pixel_coords:
-                # For pixel coordinates, use conversion factor
                 pixel_distance = np.sqrt((curr_pos[0] - prev_pos[0])**2 + 
                                        (curr_pos[1] - prev_pos[1])**2)
-                distance = pixel_distance / 10.0  # Convert pixels to meters
+                distance = pixel_distance / self.pixel_to_meter_ratio
                 
-                # Reasonable limit for pixel coordinates (less movement per frame)
-                if distance > 2.0:  # Less than 2 meters per frame
-                    return None
+                # Reasonable limit for pixel coordinates
+                if distance > 2.0:
+                    return 0.0
             else:
-                # Use real-world coordinates
                 distance = measure_distance(prev_pos, curr_pos)
                 
-                # Only add distance if movement seems reasonable
-                if distance > 5.0:  # Less than 5 meters per frame
-                    return None
+                # Reasonable limit for real-world coordinates
+                if distance > 5.0:
+                    return 0.0
             
             return distance
         except Exception:
-            return None
+            return 0.0
     
     def _smooth_speed(self, player_id, new_speed):
         """Apply smoothing to speed calculations"""
-        if new_speed is None:
-            return None
+        if new_speed == 0.0:
+            return 0.0
             
         speed_hist = self.speed_history[player_id]
         speed_hist.append(new_speed)
@@ -150,8 +146,7 @@ class SpeedAndDistanceEstimator:
         # Return median of recent speeds for stability
         if len(speed_hist) >= 3:
             return np.median(list(speed_hist))
-        else:
-            return new_speed
+        return new_speed
     
     def add_speed_and_distance_to_tracks(self, tracks):
         """Add speed and distance calculations to tracks"""
@@ -159,89 +154,93 @@ class SpeedAndDistanceEstimator:
             if obj in ("ball", "referees"):
                 continue
                 
-            # Process each player
             for frame_idx, track in enumerate(obj_tracks):
                 for tid, info in track.items():
                     player_key = f"{obj}_{tid}"
                     
-                    # Try to get transformed position first, fallback to pixel position
+                    # Get position, preferring transformed coordinates
                     position = info.get("position_transformed")
                     use_pixel_coords = False
                     
                     if position is None:
-                        # Use pixel coordinates as fallback
-                        pixel_pos = info.get("position_adjusted") or info.get("position")
-                        if pixel_pos is not None:
-                            position = pixel_pos
-                            use_pixel_coords = True
+                        # Fallback to pixel coordinates
+                        position = info.get("position_adjusted") or info.get("position")
+                        use_pixel_coords = True
                     
                     if position is None:
-                        # If we still have cached data, keep showing it
+                        # Use cached values if available
                         if player_key in self.display_cache:
                             info["speed"] = self.display_cache[player_key]['speed']
                             info["distance"] = self.display_cache[player_key]['distance']
+                        else:
+                            info["speed"] = 0.0
+                            info["distance"] = 0.0
+                            self.display_cache[player_key] = {'speed': 0.0, 'distance': 0.0}
                         continue
+                    
+                    # Ensure position is a numpy array
+                    position = np.array(position, dtype=np.float32)
                     
                     # Store position in history
                     pos_hist = self.position_history[player_key]
                     pos_hist.append((position, frame_idx, use_pixel_coords))
                     
-                    # Calculate speed if we have enough history
+                    # Calculate speed and distance if enough history
                     if len(pos_hist) >= 2:
-                        # Get recent positions and check if they're consistent coordinate types
+                        # Ensure coordinate type consistency
                         recent_positions = []
                         recent_indices = []
-                        coord_type_consistent = True
+                        coord_type = use_pixel_coords
                         
                         for pos_data in list(pos_hist)[-self.smoothing_window:]:
                             pos, idx, is_pixel = pos_data
-                            recent_positions.append(pos)
-                            recent_indices.append(idx)
-                            
-                            # Check if coordinate types are mixed
-                            if is_pixel != use_pixel_coords:
-                                coord_type_consistent = False
+                            if is_pixel == coord_type:
+                                recent_positions.append(pos)
+                                recent_indices.append(idx)
                         
-                        if len(recent_positions) >= 2 and coord_type_consistent:
+                        if len(recent_positions) >= 2:
                             # Calculate speed
-                            raw_speed = self._calculate_instantaneous_speed(recent_positions, recent_indices, use_pixel_coords)
+                            raw_speed = self._calculate_instantaneous_speed(recent_positions, recent_indices, coord_type)
                             smoothed_speed = self._smooth_speed(player_key, raw_speed)
                             
-                            # Calculate incremental distance
-                            if len(pos_hist) >= 2:
-                                prev_pos_data = pos_hist[-2]
-                                curr_pos_data = pos_hist[-1]
-                                
-                                # Only calculate if coordinate types match
-                                if prev_pos_data[2] == curr_pos_data[2]:
-                                    distance_increment = self._calculate_distance_increment(
-                                        prev_pos_data[0], curr_pos_data[0], use_pixel_coords
-                                    )
-                                    
-                                    if distance_increment is not None:
-                                        self.distance_traveled[player_key] += distance_increment
+                            # Calculate distance increment
+                            prev_pos_data = pos_hist[-2]
+                            curr_pos_data = pos_hist[-1]
+                            
+                            if prev_pos_data[2] == curr_pos_data[2]:
+                                distance_increment = self._calculate_distance_increment(
+                                    prev_pos_data[0], curr_pos_data[0], coord_type
+                                )
+                                if distance_increment > 0.0:
+                                    self.distance_traveled[player_key] += distance_increment
                             
                             # Store results
-                            if smoothed_speed is not None:
-                                info["speed"] = smoothed_speed
-                                info["distance"] = self.distance_traveled[player_key]
-                                
-                                # Update display cache
-                                self.display_cache[player_key] = {
-                                    'speed': smoothed_speed,
-                                    'distance': self.distance_traveled[player_key]
-                                }
+                            info["speed"] = smoothed_speed
+                            info["distance"] = self.distance_traveled[player_key]
+                            self.display_cache[player_key] = {
+                                'speed': smoothed_speed,
+                                'distance': self.distance_traveled[player_key]
+                            }
                         else:
-                            # Mixed coordinate types or insufficient data, use cached values
+                            # Insufficient consistent coordinates
                             if player_key in self.display_cache:
                                 info["speed"] = self.display_cache[player_key]['speed']
                                 info["distance"] = self.display_cache[player_key]['distance']
+                            else:
+                                info["speed"] = 0.0
+                                info["distance"] = self.distance_traveled[player_key]
+                                self.display_cache[player_key] = {
+                                    'speed': 0.0,
+                                    'distance': self.distance_traveled[player_key]
+                                }
                     else:
-                        # Not enough history, but initialize with zero values
-                        if player_key not in self.display_cache:
-                            self.display_cache[player_key] = {'speed': 0.0, 'distance': 0.0}
-                            info["speed"] = 0.0
-                            info["distance"] = 0.0
+                        # Initialize with zero values
+                        info["speed"] = 0.0
+                        info["distance"] = self.distance_traveled[player_key]
+                        self.display_cache[player_key] = {
+                            'speed': 0.0,
+                            'distance': self.distance_traveled[player_key]
+                        }
     
     def draw_speed_and_distance(self, frames, tracks):
         """Draw speed and distance information on frames"""
@@ -260,20 +259,13 @@ class SpeedAndDistanceEstimator:
                 for tid, info in obj_tracks[frame_idx].items():
                     player_key = f"{obj}_{tid}"
                     
-                    # Get speed and distance from track info or cache
-                    speed = info.get("speed")
-                    distance = info.get("distance")
+                    speed = info.get("speed", 0.0)
+                    distance = info.get("distance", 0.0)
                     
-                    # Fall back to cache if current values are not available
-                    if speed is None or distance is None:
-                        cached = self.display_cache.get(player_key)
-                        if cached:
-                            speed = cached.get('speed', speed)
-                            distance = cached.get('distance', distance)
-                    
-                    # Skip if we still don't have values
-                    if speed is None or distance is None:
-                        continue
+                    # Use cached values if current values are missing
+                    if player_key in self.display_cache:
+                        speed = speed or self.display_cache[player_key]['speed']
+                        distance = distance or self.display_cache[player_key]['distance']
                     
                     # Get bounding box and calculate foot position
                     bbox = info.get("bbox")
@@ -290,11 +282,10 @@ class SpeedAndDistanceEstimator:
                         text_x = max(0, min(text_x, w - 100))
                         text_y = max(20, min(text_y, h - 40))
                         
-                        # Draw speed and distance text without background
+                        # Draw speed and distance text
                         speed_text = f"{speed:.1f} km/h"
                         dist_text = f"{distance:.1f} m"
                         
-                        # Draw text directly
                         cv2.putText(img, speed_text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
                         cv2.putText(img, dist_text, (text_x, text_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
                         
@@ -318,7 +309,6 @@ class SpeedAndDistanceEstimator:
             if player_key in self.display_cache:
                 del self.display_cache[player_key]
         else:
-            # Reset all
             self.position_history.clear()
             self.speed_history.clear()
             self.distance_traveled.clear()
@@ -331,8 +321,8 @@ class SpeedAndDistanceEstimator:
             speed_hist = list(self.speed_history.get(player_key, []))
             stats[player_key] = {
                 'total_distance': self.distance_traveled[player_key],
-                'avg_speed': np.mean(speed_hist) if speed_hist else 0,
-                'max_speed': np.max(speed_hist) if speed_hist else 0,
-                'current_speed': speed_hist[-1] if speed_hist else 0
+                'avg_speed': np.mean(speed_hist) if speed_hist else 0.0,
+                'max_speed': np.max(speed_hist) if speed_hist else 0.0,
+                'current_speed': speed_hist[-1] if speed_hist else 0.0
             }
         return stats

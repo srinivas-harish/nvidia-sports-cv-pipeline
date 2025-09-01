@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from collections import deque
+from overlays.overlay_helper import draw_camera_motion_widget
+
 
 class FrameBuffer:
     """Maintains a rolling buffer of previous frames for single-frame processing."""
@@ -188,80 +190,24 @@ class CameraMotionEstimator:
         return scaled_motion
 
     def draw_camera_motion(self, frame, dx, dy):
-        """Optimized widget drawing"""
-        img = frame.copy()
-        
-        # Apply smoothing
-        self.smoothing_buffer.append((dx, dy))
-        if len(self.smoothing_buffer) >= 2:
-            dx = float(np.mean([v[0] for v in self.smoothing_buffer]))
-            dy = float(np.mean([v[1] for v in self.smoothing_buffer]))
+        return draw_camera_motion_widget(
+            frame=frame,
+            dx=dx,
+            dy=dy,
+            widget_working=self.widget_working,
+            widget_center=self.widget_center,
+            ORIGIN_X=self.ORIGIN_X,
+            ORIGIN_Y=self.ORIGIN_Y,
+            WIDGET_W=self.WIDGET_W,
+            WIDGET_H=self.WIDGET_H,
+            RING_R=self.RING_R,
+            RING_T=self.RING_T,
+            max_display_magnitude=self.max_display_magnitude,
+            font_big=self.font_big,
+            font_small=self.font_small,
+            smoothing_buffer=self.smoothing_buffer
+        )
 
-        mag = float(np.hypot(dx, dy))
-
-        # Extract and blur widget area
-        panel = img[self.ORIGIN_Y:self.ORIGIN_Y+self.WIDGET_H, 
-                   self.ORIGIN_X:self.ORIGIN_X+self.WIDGET_W].copy()
-        
-        # Faster blur with smaller kernel
-        blur = cv2.GaussianBlur(panel, (21, 21), 10)
-        dark = cv2.addWeighted(blur, 0.85, np.zeros_like(panel), 0.15, 0)
-        
-        # Copy to pre-allocated working array
-        self.widget_working[:] = dark
-
-        # Draw ring
-        cv2.circle(self.widget_working, self.widget_center, self.RING_R, 
-                  (60, 60, 60), self.RING_T, cv2.LINE_AA)
-
-        # Color based on magnitude
-        if mag < 5:
-            col = (50, 220, 50)
-        elif mag < 12:
-            col = (50, 220, 220)
-        else:
-            col = (50, 50, 255)
-
-        # Draw sweep
-        sweep = np.clip(mag / self.max_display_magnitude * 360, 0, 360)
-        if sweep > 5:  #  if significant
-            cv2.ellipse(self.widget_working, self.widget_center, 
-                       (self.RING_R, self.RING_R), 0, -90, -90 + sweep, 
-                       col, self.RING_T, cv2.LINE_AA)
-
-        #   if significant
-        if mag > 1.0:
-            u = np.array([-dx, -dy]) / (mag + 1e-6)
-            tip = (int(self.widget_center[0] + u[0] * (self.RING_R - 15)),
-                   int(self.widget_center[1] + u[1] * (self.RING_R - 15)))
-            cv2.arrowedLine(self.widget_working, self.widget_center, tip, col, 2,
-                           tipLength=0.3, line_type=cv2.LINE_AA)
-
-  
-        cv2.circle(self.widget_working, self.widget_center, 3, (255, 255, 255), -1, cv2.LINE_AA)
-
-        # Add text every frame  
-        pil = Image.fromarray(cv2.cvtColor(self.widget_working, cv2.COLOR_BGR2RGB))
-        draw = ImageDraw.Draw(pil)
-        draw.text((8, 6), "Camera Motion", font=self.font_big, fill=(255, 255, 255, 255))
-
-        txt = f"{mag:4.1f} px/f"
-        try:
-            bbox = draw.textbbox((0, 0), txt, font=self.font_small)
-            tw = bbox[2] - bbox[0]
-        except:
-            tw = draw.textsize(txt, font=self.font_small)[0]
-
-        draw.text(((self.WIDGET_W - tw) // 2, self.WIDGET_H - 25),
-                 txt, font=self.font_small, fill=(255, 255, 255, 255))
-
-        self.widget_working[:] = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
-
-        # Copy widget back to frame
-        img[self.ORIGIN_Y:self.ORIGIN_Y+self.WIDGET_H, 
-            self.ORIGIN_X:self.ORIGIN_X+self.WIDGET_W] = self.widget_working
-
-        return img
 
     def apply_adjustment(self, tracks: dict, frame_idx: int, dx: float, dy: float):
         """Apply motion adjustment to tracks"""
