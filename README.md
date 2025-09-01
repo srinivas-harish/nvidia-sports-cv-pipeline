@@ -6,20 +6,8 @@ Engineered with NVIDIA to demonstrate the raw throughput of the RTX 5070 Ti.
 
 This pipeline shows that with consumer‑grade GPUs (RTX 5070 Ti), broadcast‑quality multi-object sports analytics can run in real‑time without server‑class hardware. It’s a reference design for edge‑deployed sports AI: modular, deterministic, and optimized.
 
-
----
-**Testbed**  
-- GPU: NVIDIA RTX 5070 Ti (12 GB GDDR7, 17.04 TFLOPs FP16/FP32)  
-- Driver: 571.96 (CUDA 12.8)  
-- TensorRT: 10.12 GA  
-- CPU: AMD Ryzen AI 9 HX 370
-- Memory: 32 GB LPDDR5X-8000
-- Input: 1080p60 broadcast feed
-
-
 ---
 ## Features
-
 - **YOLOv9c + ByteTrack + Kalman fusion** – Player/referee detections feed a ByteTrack association pass with tuned thresholds (`track_activation_threshold=0.25`, `lost_track_buffer=30`, `minimum_matching_threshold=0.95`) while a 4‑state Kalman filter interpolates up to 12 missing ball frames  
 - **Ball possession acquisition** – Ball is assigned to the nearest player foot if within 70 px, enabling possession stats and HUD callouts  
 - **Jersey‑color team clustering** – KMeans on cropped torso patches clusters players into two jersey colors and caches assignments for subsequent frames  
@@ -31,7 +19,6 @@ This pipeline shows that with consumer‑grade GPUs (RTX 5070 Ti), broadcast
 
 ---
 ## TensorRT on RTX 5070 Ti (1080p, batch=4)
-
 ![Latency Plot](docs/latency_5070ti.png)
 
 | Mode            | Latency (ms/frame) | VRAM (GB) | Notes                                 |
@@ -45,6 +32,14 @@ This pipeline shows that with consumer‑grade GPUs (RTX 5070 Ti), broadcast
 
 ![Demo](docs/demo.png)
 
+---
+## **Testbed**  
+- GPU: NVIDIA RTX 5070 Ti (12 GB GDDR7, 17.04 TFLOPs FP16/FP32)  
+- Driver: 571.96 (CUDA 12.8)  
+- TensorRT: 10.12 GA  
+- CPU: AMD Ryzen AI 9 HX 370
+- Memory: 32 GB LPDDR5X-8000
+- Input: 1080p60 broadcast feed
 
 ---
 ## 📁 Repository Layout
@@ -61,6 +56,16 @@ overlays/ # HUD & toggleable widgets
 train/ # YOLO training + TensorRT export
 main_yolo.py # demo and benchmarking
 ```
+
+Frameworks: PyTorch 2.x, TensorRT 10.12, Supervision, OpenCV
+
+Tracker: ByteTrack with Kalman ball interpolation and stable-ID mapping
+
+Camera Motion: masked Lucas–Kanade optical flow, half‑res processing
+
+Analytics: homography-based speed/distance, possession streaks, team clustering
+
+Export: ONNX → TensorRT engine builder with dynamic batch profiles and FP16 flag
 
 
 ---
@@ -80,17 +85,5 @@ python -m train.train_yolo --cfg configs/train.yaml
 python -m train.export_trt --weights runs/train/best.pt --batch 4 --fp16
 python src/yolo_benchmark.py --video data/test_clip.mp4 --weights models/128060ep.pt --batch 4
 ```
-
-
-Frameworks: PyTorch 2.x, TensorRT 10.12, Supervision, OpenCV
-
-Tracker: ByteTrack with Kalman ball interpolation and stable-ID mapping
-
-Camera Motion: masked Lucas–Kanade optical flow, half‑res processing
-
-Analytics: homography-based speed/distance, possession streaks, team clustering
-
-Export: ONNX → TensorRT engine builder with dynamic batch profiles and FP16 flag
-
 
 
