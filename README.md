@@ -6,6 +6,17 @@ Engineered with NVIDIA to demonstrate the raw throughput of the RTX 5070 Ti.
 
 This pipeline shows that with consumer‑grade GPUs (RTX 5070 Ti), broadcast‑quality multi-object sports analytics can run in real‑time without server‑class hardware. It’s a reference design for edge‑deployed sports AI: modular, deterministic, and optimized.
 
+> 🚀 Featured by [NVIDIA.com](https://www.nvidia.com/en-us/geforce/news/student-recommendations-geforce-rtx-50-series/) in the official RTX 50 Series campaign.
+
+
+<p align="center">
+  <img src="docs/banner.jpg" alt="Srinivas at NVIDIA banner" width="31%" style="margin: 8px;"/>
+  <img src="docs/showcase.jpg" alt="Srinivas demoing at NVIDIA showcase" width="41%" style="margin: 8px;"/>
+  <img src="docs/website.png" alt="Featured on NVIDIA.com" width="27%" style="margin: 8px;"/>
+</p>
+
+
+
 ---
 ## Features
 - **YOLOv9c + ByteTrack + Kalman fusion** – Player/referee detections feed a ByteTrack association pass with tuned thresholds (`track_activation_threshold=0.25`, `lost_track_buffer=30`, `minimum_matching_threshold=0.95`) while a 4‑state Kalman filter interpolates up to 12 missing ball frames  
@@ -85,5 +96,6 @@ python -m train.train_yolo --cfg configs/train.yaml
 python -m train.export_trt --weights runs/train/best.pt --batch 4 --fp16
 python src/yolo_benchmark.py --video data/test_clip.mp4 --weights models/128060ep.pt --batch 4
 ```
+
 
 
