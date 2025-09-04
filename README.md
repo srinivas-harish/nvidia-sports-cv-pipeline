@@ -6,7 +6,7 @@ Engineered with NVIDIA to demonstrate the raw throughput of the RTX 5070 Ti.
 
 This pipeline shows that with consumer‑grade GPUs (RTX 5070 Ti), broadcast‑quality multi-object sports analytics can run in real‑time without server‑class hardware. It’s a reference design for edge‑deployed sports AI: modular, deterministic, and optimized.
 
-> 🚀 Featured by [NVIDIA.com](https://www.nvidia.com/en-us/geforce/news/student-recommendations-geforce-rtx-50-series/) in the official RTX 50 Series campaign.
+> 🚀 Featured by [NVIDIA.com](https://www.nvidia.com/en-us/geforce/campaigns/back-to-school/) in the official RTX 50 Series campaign.
 
 
 <p align="center">
@@ -96,6 +96,7 @@ python -m train.train_yolo --cfg configs/train.yaml
 python -m train.export_trt --weights runs/train/best.pt --batch 4 --fp16
 python src/yolo_benchmark.py --video data/test_clip.mp4 --weights models/128060ep.pt --batch 4
 ```
+
 
 
 
